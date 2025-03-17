@@ -1,0 +1,14 @@
+{
+    "cSpell.words": [
+        "CCFLAGS",
+        "CCOPTIM",
+        "Rcon",
+        "Wconversion",
+        "Wpedantic",
+        "Wshadow"
+    ],
+    "files.associations": {
+        "types.h": "c",
+        "stdlib.h": "c"
+    }
+}

@@ -10,5 +10,6 @@ typedef enum {
 } AES;
 
 typedef uint32_t word;
+typedef uint8_t byte;
 
 #endif /* TYPES_H */

@@ -2,9 +2,9 @@ CC := clang
 STD := c17
 
 CCFLAGS := -fPIC -Werror -Wpedantic -Wall -Wextra -Wconversion -Wstrict-prototypes -Wshadow
-LDFLAGS := -shared
+LDFLAGS := 
 
-TARGET:=AES.so
+TARGET:=libaes.so
 
 BUILD_DIR := build
 
@@ -18,12 +18,11 @@ SRC := $(shell find $(SRC_DIR) -name '*.c')
 OBJ := $(patsubst $(SRC_DIR)/%.c, $(OBJ_DIR)/%.o, $(SRC))
 DEP := $(patsubst $(SRC_DIR)/%.c, $(DEP_DIR)/%.d, $(SRC))
 
-$(TARGET):
-	$(MAKE) $(BUILD_DIR)/$(TARGET)
+$(TARGET): $(BUILD_DIR)/$(TARGET)
 
 $(BUILD_DIR)/$(TARGET): $(OBJ)
 	@mkdir -p $(@D)
-	$(CC) $(LDFLAGS) -o $@ $^
+	$(CC) -shared $(LDFLAGS) -o $@ $^
 
 $(SRC_DIR)/%.o:
 	$(MAKE) $(patsubst $(SRC_DIR)/%,$(OBJ_DIR)/%,$@)
@@ -34,7 +33,9 @@ $(OBJ_DIR)/%.o: $(SRC_DIR)/%.c
 
 -include $(DEP)
 
+compile: $(OBJ)
+
 clean:
 	rm -rf $(BUILD_DIR)
 
-.PHONY: clean
+.PHONY: clean compile

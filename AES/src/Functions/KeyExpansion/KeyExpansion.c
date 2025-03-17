@@ -1,8 +1,8 @@
 #include <stdlib.h>
 #include "Types.h"
 
-extern const uint8_t Nk_array[];
-extern const uint8_t Nr_array[];
+extern const byte Nk_array[];
+extern const byte Nr_array[];
 
 extern const word Rcon[];
 
@@ -11,13 +11,13 @@ word RotWord(word w);
 
 word *KeyExpansion(AES alg, const word *key) {
     /* variables based on selected algorithm */
-    uint8_t Nk = Nk_array[alg];
-    uint8_t Nr = Nr_array[alg];
+    byte Nk = Nk_array[alg];
+    byte Nr = Nr_array[alg];
 
     /* return value */
     word *w = malloc((4 * Nr + 4) * sizeof(word));
 
-    uint8_t i = 0;
+    byte i = 0;
     while (i < Nk) {
         w[i] = key[i];
         i++;

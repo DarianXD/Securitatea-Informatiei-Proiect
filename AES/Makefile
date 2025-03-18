@@ -1,10 +1,14 @@
+# macOS build
+
 CC := clang
 STD := c17
 
-CCFLAGS := -fPIC -Werror -Wpedantic -Wall -Wextra -Wconversion -Wstrict-prototypes -Wshadow
+CCFLAGS := 
 LDFLAGS := 
 
-TARGET:=libaes.so
+WARNINGS := -Werror -Wpedantic -Wall -Wextra -Wconversion -Wstrict-prototypes -Wshadow
+
+TARGET := libaes.dylib
 
 BUILD_DIR := build
 
@@ -22,14 +26,14 @@ $(TARGET): $(BUILD_DIR)/$(TARGET)
 
 $(BUILD_DIR)/$(TARGET): $(OBJ)
 	@mkdir -p $(@D)
-	$(CC) -shared $(LDFLAGS) -o $@ $^
+	$(CC) $(LDFLAGS) -o $@ $^ -dynamiclib -install_name "$(TARGET)"
 
 $(SRC_DIR)/%.o:
 	$(MAKE) $(patsubst $(SRC_DIR)/%,$(OBJ_DIR)/%,$@)
 
 $(OBJ_DIR)/%.o: $(SRC_DIR)/%.c
 	@mkdir -p $(@D) $(dir $(DEP_DIR)/$*)
-	$(CC) -std=$(STD) $(CCFLAGS) $(INCLUDE) -c -o $@ $< -MMD -MP -MF $(DEP_DIR)/$*.d -MT $@
+	$(CC) -std=$(STD) -fPIC $(CCFLAGS) $(INCLUDE) $(WARNINGS) -c -o $@ $< -MMD -MP -MF $(DEP_DIR)/$*.d -MT $@
 
 -include $(DEP)
 

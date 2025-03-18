@@ -4,7 +4,7 @@ byte XTimes(byte b);
 
 byte GFTimes(byte b, byte c) {
     byte result = 0;
-    for (byte bit = 0; bit < 8; bit++) {
+    for (byte bit = 0; bit < 8 && c; bit++, c >>= 1) {
         if (!(c & 1)) {
             continue;   
         }

@@ -13,7 +13,7 @@ const byte Nk_array[] = {4, 6, 8};
 
 const byte Nr_array[] = {10, 12, 14};
 
-const word Rcon[10] = {
+const word Rcon[11] = { 0,
     0x01000000, 0x02000000, 0x04000000, 0x08000000, 0x10000000,
     0x20000000, 0x40000000, 0x80000000, 0x1b000000, 0x36000000
 };

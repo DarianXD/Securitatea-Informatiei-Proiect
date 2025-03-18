@@ -2,8 +2,11 @@
     "cSpell.words": [
         "CCFLAGS",
         "CCOPTIM",
+        "dylib",
+        "dynamiclib",
         "libaes",
         "Rcon",
+        "rpath",
         "Wconversion",
         "Wpedantic",
         "Wshadow"

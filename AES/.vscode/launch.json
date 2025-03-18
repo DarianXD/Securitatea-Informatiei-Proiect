@@ -1,0 +1,23 @@
+{
+    "version": "2.0.0",
+    "configurations": [
+        {
+            "name": "(lldb) Launch test arm64 macOS",
+            "type": "cppdbg",
+            "request": "launch",
+            "program": "${workspaceFolder}/test/a.out",
+            "args": [],
+            "stopAtEntry": true,
+            "cwd": "${workspaceFolder}/test",
+            "environment": [
+                {
+                    "name": "DYLD_LIBRARY_PATH",
+                    "value": "${workspaceFolder}/build"
+                }
+            ],
+            "externalConsole": false,
+            "MIMode": "lldb",
+            "targetArchitecture": "arm64"
+        },
+    ]
+}

@@ -3,7 +3,7 @@
 byte GFTimes(byte b, byte c);
 
 void InvMixColumns(byte val[4][4]) {
-    byte table[4][4] = {
+    static const byte table[4][4] = {
         {0x0e, 0x0b, 0x0d, 0x09},
         {0x09, 0x0e, 0x0b, 0x0d},
         {0x0d, 0x09, 0x0e, 0x0b},

@@ -14,8 +14,12 @@ void InvMixColumns(byte val[4][4]) {
         byte result[4] = {0};
         for (byte row = 0; row < 4; row++) {
             for (byte i = 0; i < 4; i++) {
-                result[row] ^= GFTimes(val[i][col], table[row][i]);
+                result[row] ^= GFTimes(table[row][i], val[i][col]);
             }
+        }
+
+        for(byte i = 0; i < 4; i++) {
+            val[i][col] = result[i];
         }
     }
 }

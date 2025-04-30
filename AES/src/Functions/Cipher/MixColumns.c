@@ -18,7 +18,7 @@ void MixColumns(byte val[4][4])
         {
             for(int i = 0; i < 4; ++i)
             {
-                result[row] ^= GFTimes(table[i][row], val[i][col]);
+                result[row] ^= GFTimes(table[row][i], val[i][col]);
             }
         }
 

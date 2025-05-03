@@ -1,4 +1,6 @@
-# macOS build
+# Darwin / Linux
+
+OS := $(shell uname)
 
 CC := clang
 STD := c17
@@ -8,25 +10,38 @@ LDFLAGS :=
 
 WARNINGS := -Werror -Wpedantic -Wall -Wextra -Wconversion -Wstrict-prototypes -Wshadow
 
-TARGET := libaes.dylib
+LIB := aes
+
+ifeq ($(OS), Darwin)
+    TARGET := lib$(LIB).dylib
+    LIB_FLAGS += -dynamiclib -install_name "$(TARGET)"
+else ifeq ($(OS), Linux)
+    TARGET := lib$(LIB).so
+    LIB_FLAGS += -shared -Wl,-soname,$(TARGET)
+else
+    $(error Unsupported platform: $(OS))
+endif
 
 BUILD_DIR := build
 
 SRC_DIR := src
+INC_DIR := inc/$(LIB)
 OBJ_DIR := $(BUILD_DIR)/obj
 DEP_DIR := $(OBJ_DIR)/.deps
 
-INCLUDE := -I$(SRC_DIR)
+INCLUDE := -I$(SRC_DIR) -I$(INC_DIR)
 
 SRC := $(shell find $(SRC_DIR) -name '*.c')
 OBJ := $(patsubst $(SRC_DIR)/%.c, $(OBJ_DIR)/%.o, $(SRC))
 DEP := $(patsubst $(SRC_DIR)/%.c, $(DEP_DIR)/%.d, $(SRC))
 
+$(LIB): $(TARGET)
+
 $(TARGET): $(BUILD_DIR)/$(TARGET)
 
 $(BUILD_DIR)/$(TARGET): $(OBJ)
 	@mkdir -p $(@D)
-	$(CC) $(LDFLAGS) -o $@ $^ -dynamiclib -install_name "$(TARGET)"
+	$(CC) $(LDFLAGS) -o $@ $^ $(LIB_FLAGS)
 
 $(SRC_DIR)/%.o:
 	$(MAKE) $(patsubst $(SRC_DIR)/%,$(OBJ_DIR)/%,$@)

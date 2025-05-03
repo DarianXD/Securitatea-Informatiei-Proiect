@@ -1,4 +1,5 @@
 #include <stdlib.h>
+#include "AES.h"
 #include "Types.h"
 
 extern const byte Nk_array[];
@@ -16,6 +17,9 @@ word *KeyExpansion(AES alg, const word *key) {
 
     /* return value */
     word *w = malloc((4 * Nr + 4) * sizeof(word));
+    if (!w) {
+        return NULL;
+    }
 
     byte i = 0;
     while (i < Nk) {

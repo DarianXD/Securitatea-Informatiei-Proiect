@@ -7,6 +7,7 @@
         "libaes",
         "Rcon",
         "rpath",
+        "soname",
         "Wconversion",
         "Werror",
         "Wpedantic",

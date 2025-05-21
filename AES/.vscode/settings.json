@@ -16,6 +16,8 @@
     "files.associations": {
         "types.h": "c",
         "stdlib.h": "c",
-        "stdint.h": "c"
+        "stdint.h": "c",
+        "aes.h": "c",
+        "stddef.h": "c"
     }
 }

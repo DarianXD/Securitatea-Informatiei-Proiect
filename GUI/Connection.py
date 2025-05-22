@@ -17,7 +17,7 @@ class ConnectionWorker(threading.Thread):
         self.running = threading.Event()
         self.running.set()
 
-    def negotiate(self):
+    def negotiate(self, sock: socket.socket):
         # Placeholder for negotiation logic
         # Uses Diffie-Hellman key exchange
         # p and g are stored in a file
@@ -55,7 +55,7 @@ class ConnectionWorker(threading.Thread):
                 server_sock.close()
 
             if sock is not None:
-                alg, key = self.negotiate()
+                alg, key = self.negotiate(sock)
                 conn = Connection(sock, self.on_error, self.on_close, alg, key)
                 self.on_success(conn, addr)
                 

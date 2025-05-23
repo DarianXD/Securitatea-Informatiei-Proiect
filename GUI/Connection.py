@@ -68,7 +68,7 @@ class ConnectionWorker(threading.Thread):
             self.join()
 
 class Connection:
-    def __init__(self, sock: socket.socket, on_error, on_close, key, alg):
+    def __init__(self, sock: socket.socket, on_error, on_close, alg, key):
         self.sock = sock
         self.key = key
         self.alg = alg

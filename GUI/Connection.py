@@ -3,7 +3,12 @@ import queue
 import socket
 
 from AES import aes_ecb, AES
-from Types import File
+from Types import File, FileRequest, FileConfirmation, FileSendConfirmation, FileRecvConfirmation, FileSendProgress, FileRecvProgress, EncryptionError, DecryptionError
+
+_MESSAGE_TYPE = 0
+_FILE_TYPE = 1
+_FILE_REQUEST_TYPE = 2
+_FILE_RESPONSE_TYPE = 3
 
 class ConnectionWorker(threading.Thread):
     def __init__(self, ip, port, mode, on_success, on_error, on_close):
@@ -73,37 +78,109 @@ class Connection:
         self.sock = sock
         self.key = key
         self.alg = alg
+        
         self.recv_queue = queue.Queue()
         self.send_queue = queue.Queue()
+
+        self.send_file_queue = queue.Queue()
+
+        self.write_file_queue = queue.Queue()
+
         self.running = threading.Event()
         self.sock.settimeout(0.1)
         self.running.set()
+
+        self.send_lock = threading.Lock()
+        self.file_accept = threading.Event()
+        self.file_accept_lock = threading.Lock()
+        self.file_accept_flag = False
+
+        self.current_file = None
+        self.current_file_lock = threading.Lock()
+
+        self.current_file_size = 0
+        self.current_file_size_lock = threading.Lock()
     
-        self.packet_size = 1500
+        self.recv_size = 1500
+        self.file_chunk_size = 10000
+
+        self.file_progress_info_interval = 1000000
 
         self.on_error = on_error
         self.on_close = on_close
+
         self.recv_thread = threading.Thread(target=self._recv_loop, daemon=True)
         self.send_thread = threading.Thread(target=self._send_loop, daemon=True)
+        self.send_file_thread = threading.Thread(target=self._send_file_loop, daemon=True)
+        self.write_file_thread = threading.Thread(target=self._write_file_loop, daemon=True)
+
         self.recv_thread.start()
         self.send_thread.start()
+        self.send_file_thread.start()
+        self.write_file_thread.start()
+
+    @property
+    def receiving_file(self):
+        with self.current_file_lock:
+            return self.current_file is not None
+        
+    @property
+    def sending_file(self):
+        with self.file_accept_lock:
+            return self.file_accept_flag
 
     def _recv_loop(self):
         data = b''
         while self.running.is_set():
             try:
-                data += self.sock.recv(self.packet_size)
-                if not data:
+                recv = self.sock.recv(self.recv_size)
+                if not recv:
                     self.on_close()
                     break
 
+                data += recv
+
                 while True:
-                    val, size = self._unpackage_data(data)
-                    if size == 0:
+                    packet_type = self._check_packet(data)
+                    if packet_type is None:
                         break
 
-                    self.recv_queue.put(val)
-                    data = data[size:]
+                    if packet_type == _MESSAGE_TYPE:
+                        val, size = self._unpackage_data(data)
+                        if size == 0:
+                            break
+
+                        self.recv_queue.put(val)
+                        data = data[size:]
+
+                    elif packet_type == _FILE_TYPE:
+                        val, size, last_chunk = self._unpackage_file(data)
+                        if size == 0:
+                            break
+
+                        self.write_file_queue.put((val, last_chunk))
+                        data = data[size:]
+
+                    elif packet_type == _FILE_REQUEST_TYPE:
+                        file_request, size = self._unpackage_file_request(data)
+                        if size == 0:
+                            break
+
+                        with self.current_file_size_lock:
+                            self.current_file_size = file_request.size
+
+                        self.recv_queue.put(file_request)
+                        data = data[size:]
+
+                    elif packet_type == _FILE_RESPONSE_TYPE:
+                        flag, size = self._unpackage_file_response(data)
+
+                        with self.file_accept_lock:
+                            self.file_accept_flag = flag
+
+                        self.file_accept.set()
+                        data = data[size:]
+                        
 
             except socket.timeout:
                 continue
@@ -121,11 +198,13 @@ class Connection:
                 if data is None:
                     continue
 
-                data = self._package_data(data)
-                data = [data[i:i + self.packet_size] for i in range(0, len(data), self.packet_size)]
+                if isinstance(data, FileConfirmation):
+                    data = self._package_file_response(data.ok)
+                else:
+                    data = self._package_data(data)
 
-                for val in data:
-                    self.sock.sendall(val)
+                with self.send_lock:
+                    self.sock.sendall(data)
 
             except queue.Empty:
                 continue
@@ -139,70 +218,271 @@ class Connection:
 
         self.running.clear()
 
-    def _package_data(self, data: bytes | File):
+    def _send_file_loop(self):
+        while self.running.is_set():
+            try:
+                file = self.send_file_queue.get(timeout=0.1)
+                if file is None:
+                    continue
+
+                request = self._package_file_request(file)
+
+                with self.send_lock:
+                    self.sock.sendall(request)
+
+                self.file_accept.wait()
+                self.file_accept.clear()
+
+                flag = False
+                with self.file_accept_lock:
+                    flag = self.file_accept_flag
+
+                if flag:
+                    self.recv_queue.put(FileConfirmation(True))
+
+                    file_send = False
+                    total_sent = 0
+                    with open(file.path, "rb") as f:
+                        while self.running.is_set():
+                            chunk = f.read(self.file_chunk_size)
+                            if not chunk:
+                                break
+
+                            last = not len(chunk) == self.file_chunk_size
+                            data = self._package_file(chunk, last)
+
+                            if last:
+                                file_send = True
+
+                            with self.send_lock:
+                                self.sock.sendall(data)
+                            
+                            total_sent += len(chunk)
+                            if total_sent % self.file_progress_info_interval == 0:
+                                self.recv_queue.put(FileSendProgress(total_sent, file.size))
+
+                    with self.file_accept_lock:
+                        self.file_accept_flag = False
+
+                    self.recv_queue.put(FileSendConfirmation(file_send))
+
+                else:
+                    self.recv_queue.put(FileConfirmation(False))
+                
+            except queue.Empty:
+                continue
+
+            except socket.timeout:
+                continue
+
+            except Exception as e:
+                self.on_error(str(e))
+                break
+
+        self.running.clear()
+
+    def _write_file_loop(self):
+        while self.running.is_set():
+            try:
+                path = None
+                with self.current_file_lock:
+                    path = self.current_file
+
+                total_size = 0
+                with self.current_file_size_lock:
+                    total_size = self.current_file_size
+
+                if path is None:
+                    continue
+                
+                file_saved = False
+                total_saved = 0
+                with open(path, "ab") as f:
+                    while self.running.is_set():
+                        try:
+                            data = self.write_file_queue.get(timeout=0.1)
+                            if data is None:
+                                continue
+
+                            data, last = data
+
+                            f.write(data)
+                            
+                            total_saved += len(data)
+                            if total_saved % self.file_progress_info_interval == 0:
+                                self.recv_queue.put(FileRecvProgress(total_saved, total_size))
+
+                            if last:
+                                with self.current_file_lock:
+                                    self.current_file = None
+
+                                file_saved = True
+                                break
+
+                        except queue.Empty:
+                            continue
+
+                self.recv_queue.put(FileRecvConfirmation(file_saved))
+
+            except Exception as e:
+                self.on_error(str(e))
+                break
+        
+    def _package_data(self, data: bytes):
+        data = self._encrypt(data)
+
         header = bytearray(1)
+        header.extend(len(data).to_bytes(8, 'big'))
+        header = self._encrypt(header)
 
-        message = data
-        filename = None
-        file = False
-        if isinstance(data, File):
-            message = data.data
-            filename = data.name
-            file = True
- 
-        header[0] |= 0b10000000 if file else 0b00000000
+        return header + data
+    
+    def _package_file(self, data: bytes, last_chunk: bool):
+        data = self._encrypt(data)
 
-        message = aes_ecb(self.alg, self.key, message) if message is not None else b''
-        filename = aes_ecb(self.alg, self.key, filename) if filename is not None else b''
+        header = bytearray(1)
+        header[0] |= 0b10000000
 
-        header.extend(len(message).to_bytes(8, 'big') if message is not None else b'\x00' * 8)
-        header.extend(len(filename).to_bytes(6, 'big') if filename is not None else b'\x00' * 6)
+        if not last_chunk:
+            header[0] |= 0b01000000
 
-        header = aes_ecb(self.alg, self.key, header)
+        header.extend(len(data).to_bytes(8, 'big'))
+        header = self._encrypt( header)
 
-        return header + message + filename
+        return header + data
+    
+    def _package_file_request(self, file: File):
+        data = self._encrypt(file.name.encode('utf-8'))
+
+        header = bytearray(1)
+        header[0] |= 0b10100000
+        header.extend(file.size.to_bytes(8, 'big'))
+        header.extend(len(data).to_bytes(6, 'big'))
+        header = self._encrypt(header)
+
+        return header + data
+    
+    def _package_file_response(self, response: bool):
+        header = bytearray(1)
+        header[0] |= 0b10010000
+
+        if response:
+            header[0] |= 0b01000000
+
+        header = self._encrypt(header)
+        return header
+        
+    def _check_packet(self, packet: bytes):
+        if len(packet) < 16:
+            return None
+
+        header = self._decrypt(packet[:16])
+
+        if not (header[0] & 0b10000000):
+            return _MESSAGE_TYPE
+        else:
+            if header[0] & 0b00100000:
+                return _FILE_REQUEST_TYPE
+            
+            if header[0] & 0b00010000:
+                return _FILE_RESPONSE_TYPE
+            
+            return _FILE_TYPE
         
     def _unpackage_data(self, packet: bytes):
-        if (len(packet) < 16):
+        if len(packet) < 16:
             return None, 0
-        
-        header = aes_ecb(self.alg, self.key, packet[:16], decrypt=True)
-        
-        file = header[0] & 0b10000000 != 0
 
-        message_len = int.from_bytes(header[1:9], 'big')
-        filename_len = int.from_bytes(header[9:15], 'big')
-        packet_len = 16 + message_len + filename_len
+        header = self._decrypt(packet[:16])
+        size = int.from_bytes(header[1:9], 'big') + 16
 
-        if len(packet) < packet_len:
+        if len(packet) < size:
             return None, 0
+
+        data = self._decrypt(packet[16:size])
+        return data, size
+    
+    def _unpackage_file(self, packet: bytes):
+        if len(packet) < 16:
+            return None, 0, False
+
+        header = self._decrypt(packet[:16])
+        size = int.from_bytes(header[1:9], 'big') + 16
+
+        if len(packet) < size:
+            return None, 0, False
         
-        message = aes_ecb(self.alg, self.key, packet[16:16 + message_len], decrypt=True)
-        filename = aes_ecb(self.alg, self.key, packet[16 + message_len:16 + message_len + filename_len], decrypt=True)
+        last_chunk = not (header[0] & 0b01000000)
+        data = self._decrypt(packet[16:size])
+        return data, size, last_chunk
+    
+    def _unpackage_file_request(self, packet: bytes):
+        if len(packet) < 16:
+            return None, 0
 
-        if message == b'':
-            message = None
+        header = self._decrypt(packet[:16])
+        file_size = int.from_bytes(header[1:9], 'big')
+        size = int.from_bytes(header[9:15], 'big') + 16
 
-        if filename == b'':
-            filename = None
+        if len(packet) < size:
+            return None, 0
 
-        if file:
-            return File(filename, message), packet_len
-        
-        return message, packet_len
+        name = self._decrypt(packet[16:size]).decode('utf-8')
+        return FileRequest(name, file_size), size
+    
+    def _unpackage_file_response(self, packet: bytes):
+        if len(packet) < 16:
+            return None, 0
+
+        header = self._decrypt(packet[:16])
+
+        return header[0] & 0b01000000, 16
 
     def send(self, data: bytes):
         self.send_queue.put(data)
+
+    def send_file(self, file: File):
+        self.send_file_queue.put(file)
 
     def recv(self):
         try:
             return self.recv_queue.get_nowait()
         except queue.Empty:
             return None
+        
+    def accept_file(self, path: str, accept: bool = True):
+        confirm = FileConfirmation(accept)
+        self.send_queue.put(confirm)
+
+        if confirm.ok:
+            with self.current_file_lock:
+                if self.current_file is not None:
+                    raise Exception("File download error")
+
+                self.current_file = path
+
+    def _encrypt(self, data: bytes):
+        val = aes_ecb(self.alg, self.key, data)
+        if len(val) == 0:
+            raise EncryptionError()
+        
+        return val
+        
+    def _decrypt(self, data: bytes):
+        val = aes_ecb(self.alg, self.key, data, decrypt=True)
+        if len(val) == 0:
+            raise DecryptionError()
+        
+        return val
 
     def close(self):
         if self.running.is_set():
             self.running.clear()
+
             self.recv_thread.join()
             self.send_thread.join()
+
+            self.send_file_thread.join()
+            self.write_file_thread.join()
+
             self.sock.close()

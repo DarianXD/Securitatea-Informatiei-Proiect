@@ -1,8 +1,12 @@
-from Connection import Connection, ConnectionWorker
+from Connection import ConnectionWorker
 import socket
 import tkinter as tk
 from tkinter import ttk
 import datetime
+import os
+from tkinter import filedialog
+from Types import File, FileRequest, FileConfirmation, FileSendConfirmation, FileRecvConfirmation, FileSendProgress, FileRecvProgress
+import tkinter.messagebox as messagebox
 
 class ConnectApp(tk.Tk):
     def __init__(self):
@@ -67,6 +71,10 @@ class ConnectionWindow(tk.Toplevel):
 
         self.text_area.tag_configure("send_tag", background="#ffe5b4", foreground="#000000")
         self.text_area.tag_configure("recv_tag", background="#e0ffe0", foreground="#000000")
+
+        self.text_area.tag_configure("send_file_tag", background="#ffe5b4", foreground="#001a66")
+        self.text_area.tag_configure("recv_file_tag", background="#e0ffe0", foreground="#001a66")
+
         self.text_area.tag_configure("error_tag", background="#ff0000", foreground="#ffff00")
         self.text_area.tag_configure("red", background="#ffffff", foreground="#ff0000")
 
@@ -74,10 +82,15 @@ class ConnectionWindow(tk.Toplevel):
         self.entry_frame.pack(fill=tk.X, padx=10, pady=5)
         self.entry = tk.Entry(self.entry_frame)
         self.entry.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 5))
-        self.send_btn = tk.Button(self.entry_frame, text="Send", command=self.send_message, state=tk.DISABLED)
-        self.send_btn.pack(side=tk.RIGHT)
 
-        # Start connection in a separate thread
+        self.send_btn = tk.Button(self.entry_frame, text="Send", command=self.send_message)
+        self.file_btn = tk.Button(self.entry_frame, text="File", command=self.send_file)
+
+        self.disable_buttons()
+
+        self.send_btn.pack(side=tk.RIGHT)
+        self.file_btn.pack(side=tk.RIGHT)
+
         self.worker = ConnectionWorker(
             ip, port, mode,
             on_success=self.on_connection_success,
@@ -89,7 +102,33 @@ class ConnectionWindow(tk.Toplevel):
 
         self.after(100, self.check_incoming)
 
+    def save_chat(self):
+        file_path = filedialog.asksaveasfilename(
+            title="Save Chat"
+        )
+
+        if not file_path:
+            return
+
+        chat_content = self.text_area.get("1.0", tk.END)
+        with open(file_path, "w", encoding="utf-8") as f:
+            f.write(chat_content)
+
     def on_close(self):
+        if self.connection is not None:
+            if not messagebox.askyesno("disconnect", "Close connection?"):
+                return
+
+            if self.connection.receiving_file:
+                if not messagebox.askyesno("disconnect", "Close connection while receiving a file?"):
+                    return
+            
+            if self.connection.sending_file:
+                if not messagebox.askyesno("disconnect", "Close connection while sending a file?"):
+                    return
+                
+        self.save_chat()
+            
         self.clear_connection()
         self.on_close_window()
 
@@ -102,26 +141,39 @@ class ConnectionWindow(tk.Toplevel):
             self.connection.close()
             self.connection = None
 
+    def enable_buttons(self):
+        self.send_btn.config(state=tk.NORMAL)
+        self.file_btn.config(state=tk.NORMAL)
+        self.entry.bind("<Return>", lambda event: self.send_message())
+
+    def disable_buttons(self):
+        self.send_btn.config(state=tk.DISABLED)
+        self.file_btn.config(state=tk.DISABLED)
+        self.entry.unbind("<Return>")
+
     def on_connection_success(self, connection, addr):
         def callback():
             self.addr = addr
             self.connection = connection
             self.status_label.config(text=f"Connected to {self.addr}")
-            self.send_btn.config(state=tk.NORMAL)
+            self.enable_buttons()
+
         self.after(0, callback)
 
     def on_connection_error(self, error_msg):
         def callback():
             self.clear_connection()
             self.status_label.config(text=f"Connection {f"to {self.addr} " if self.addr else ""}failed: {error_msg}")
-            self.send_btn.config(state=tk.DISABLED)
+            self.disable_buttons()
+
         self.after(0, callback)
 
     def on_connection_close(self):
         def callback():
             self.clear_connection()
             self.status_label.config(text=f"Connection {f"to {self.addr} " if self.addr else ""}closed")
-            self.send_btn.config(state=tk.DISABLED)
+            self.disable_buttons()
+
         self.after(0, callback)
 
     def send_message(self):
@@ -133,9 +185,37 @@ class ConnectionWindow(tk.Toplevel):
                 now = datetime.datetime.now().strftime("%H:%M:%S")
                 self.append_text(f"{now} send:", "send_tag", "")
                 self.append_text(f" {msg}")
+
             except Exception as e:
-                self.append_text(f"Send error:", "error_tag", "")
+                self.append_text(f"send error:", "error_tag", "")
                 self.append_text(f" {e}", "red")
+
+    def send_file(self):
+        if self.connection:
+            if self.connection.sending_file:
+                messagebox.showwarning("Warning", "File is already being sent.")
+                return
+
+            file_path = filedialog.askopenfilename(title="Send file")
+            if file_path:
+                try:
+                    file_name = os.path.basename(file_path)
+                    
+                    file = File(
+                        path=file_path,
+                        name=file_name,
+                        size=os.path.getsize(file_path),
+                    )
+
+                    self.connection.send_file(file)
+
+                    now = datetime.datetime.now().strftime("%H:%M:%S")
+                    self.append_text(f"{now} send file start:", "send_file_tag", "")
+                    self.append_text(f" {file.name} (size: {file.size} bytes, path: {file.path})")
+
+                except Exception as e:
+                    self.append_text(f"send file error:", "error_tag", "")
+                    self.append_text(f" {e}", "red")
 
     def append_text(self, msg, tag=None, line_ending="\n"):
         self.text_area.config(state=tk.NORMAL)
@@ -150,9 +230,54 @@ class ConnectionWindow(tk.Toplevel):
                     data = self.connection.recv()
                     if data is None:
                         break
-                    now = datetime.datetime.now().strftime("%H:%M:%S")
-                    self.append_text(f"{now} recv:", "recv_tag", "")
-                    self.append_text(f" {data.decode(errors='replace')}")
+
+                    if isinstance(data, FileConfirmation):
+                        if not data.ok:
+                            self.append_text(f"sent file rejected", "error_tag")
+
+                    elif isinstance(data, FileSendConfirmation):
+                        now = datetime.datetime.now().strftime("%H:%M:%S")
+                        if data.ok:
+                            self.append_text(f"{now} send file finished", "send_file_tag")
+                        else:
+                            self.append_text(f"{now} send file failed", "error_tag")
+
+                    elif isinstance(data, FileRecvConfirmation):
+                        now = datetime.datetime.now().strftime("%H:%M:%S")
+                        if data.ok:
+                            self.append_text(f"{now} recv file finished", "recv_file_tag")
+                        else:
+                            self.append_text(f"{now} recv file failed", "error_tag")
+
+                    elif isinstance(data, FileSendProgress):
+                        self.append_text(f"send file progress:", "send_file_tag", "")
+                        self.append_text(f" {data.sent / 1000000} / {data.total / 1000000} MB sent")
+
+                    elif isinstance(data, FileRecvProgress):
+                        self.append_text(f"recv file progress:", "recv_file_tag", "")
+                        self.append_text(f" {data.received / 1000000} / {data.total / 1000000} MB received")
+
+                    elif isinstance(data, FileRequest):
+                        save_path = filedialog.asksaveasfilename(
+                            title="Save File",
+                            initialfile=data.name,
+                        )
+
+                        now = datetime.datetime.now().strftime("%H:%M:%S")
+
+                        if save_path:
+                            self.connection.accept_file(save_path)
+                            self.append_text(f"{now} recv file started:", "recv_file_tag", "")
+                            self.append_text(f" {data.name} (size: {data.size} bytes, path: {save_path})")
+                        else:
+                            self.connection.accept_file(None, False)
+                            self.append_text(f"recv file rejected", "error_tag")
+
+                    else:
+                        now = datetime.datetime.now().strftime("%H:%M:%S")
+                        self.append_text(f"{now} recv:", "recv_tag", "")
+                        self.append_text(f" {data.decode(errors='replace')}")
+
             except Exception as e:
                 self.append_text(f"Recv error:", "error_tag", "")
                 self.append_text(f" {e}", "red")
@@ -160,5 +285,4 @@ class ConnectionWindow(tk.Toplevel):
         self.after(100, self.check_incoming)
 
 if __name__ == "__main__":
-    app = ConnectApp()
-    app.mainloop()
+    ConnectApp().mainloop()

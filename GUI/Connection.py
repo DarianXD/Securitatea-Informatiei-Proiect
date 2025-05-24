@@ -3,6 +3,7 @@ import queue
 import socket
 
 from AES import aes_ecb, AES
+from Types import File
 
 class ConnectionWorker(threading.Thread):
     def __init__(self, ip, port, mode, on_success, on_error, on_close):
@@ -25,7 +26,7 @@ class ConnectionWorker(threading.Thread):
         # and receives the other party's secret number
         # calculate the sheared secret
         # use it in a Key Derivation Function (KDF)
-        # algoritm could also be stored in the file 
+        # algoritm could also be stored in the file
         return (AES.AES_128, [0x00] * 16)
 
     def run(self):
@@ -77,6 +78,8 @@ class Connection:
         self.running = threading.Event()
         self.sock.settimeout(0.1)
         self.running.set()
+    
+        self.packet_size = 1500
 
         self.on_error = on_error
         self.on_close = on_close
@@ -86,16 +89,21 @@ class Connection:
         self.send_thread.start()
 
     def _recv_loop(self):
+        data = b''
         while self.running.is_set():
             try:
-                data = self.sock.recv(5000)
+                data += self.sock.recv(self.packet_size)
                 if not data:
                     self.on_close()
                     break
 
-                data = aes_ecb(self.alg, self.key, data, decrypt=True)
+                while True:
+                    val, size = self._unpackage_data(data)
+                    if size == 0:
+                        break
 
-                self.recv_queue.put(data)
+                    self.recv_queue.put(val)
+                    data = data[size:]
 
             except socket.timeout:
                 continue
@@ -113,9 +121,11 @@ class Connection:
                 if data is None:
                     continue
 
-                data = aes_ecb(self.alg, self.key, data)
+                data = self._package_data(data)
+                data = [data[i:i + self.packet_size] for i in range(0, len(data), self.packet_size)]
 
-                self.sock.sendall(data)
+                for val in data:
+                    self.sock.sendall(val)
 
             except queue.Empty:
                 continue
@@ -128,6 +138,58 @@ class Connection:
                 break
 
         self.running.clear()
+
+    def _package_data(self, data: bytes | File):
+        header = bytearray(1)
+
+        message = data
+        filename = None
+        file = False
+        if isinstance(data, File):
+            message = data.data
+            filename = data.name
+            file = True
+ 
+        header[0] |= 0b10000000 if file else 0b00000000
+
+        message = aes_ecb(self.alg, self.key, message) if message is not None else b''
+        filename = aes_ecb(self.alg, self.key, filename) if filename is not None else b''
+
+        header.extend(len(message).to_bytes(8, 'big') if message is not None else b'\x00' * 8)
+        header.extend(len(filename).to_bytes(6, 'big') if filename is not None else b'\x00' * 6)
+
+        header = aes_ecb(self.alg, self.key, header)
+
+        return header + message + filename
+        
+    def _unpackage_data(self, packet: bytes):
+        if (len(packet) < 16):
+            return None, 0
+        
+        header = aes_ecb(self.alg, self.key, packet[:16], decrypt=True)
+        
+        file = header[0] & 0b10000000 != 0
+
+        message_len = int.from_bytes(header[1:9], 'big')
+        filename_len = int.from_bytes(header[9:15], 'big')
+        packet_len = 16 + message_len + filename_len
+
+        if len(packet) < packet_len:
+            return None, 0
+        
+        message = aes_ecb(self.alg, self.key, packet[16:16 + message_len], decrypt=True)
+        filename = aes_ecb(self.alg, self.key, packet[16 + message_len:16 + message_len + filename_len], decrypt=True)
+
+        if message == b'':
+            message = None
+
+        if filename == b'':
+            filename = None
+
+        if file:
+            return File(filename, message), packet_len
+        
+        return message, packet_len
 
     def send(self, data: bytes):
         self.send_queue.put(data)

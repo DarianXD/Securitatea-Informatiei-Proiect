@@ -12,6 +12,11 @@ typedef enum {
     AES_256 = 2
 } AES;
 
-size_t AES_ECB(AES alg, const word *key, const byte *input, byte *output, size_t inputSize, size_t outputSize, bool decrypt);
+typedef word* AES_key;
+
+size_t AES_ECB(AES alg, const AES_key expanded_key, const byte *input, byte *output, size_t inputSize, size_t outputSize, bool decrypt);
+
+AES_key AES_expand_key(AES alg, const word *key);
+void AES_free_key(AES_key *key);
 
 #endif /* AES_H */

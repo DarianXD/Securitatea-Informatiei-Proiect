@@ -38,3 +38,7 @@ class EncryptionError(Exception):
 class DecryptionError(Exception):
     def __init__(self):
         super().__init__("Decryption error")
+
+class EncryptionKeyError(Exception):
+    def __init__(self):
+        super().__init__("Encryption key error")

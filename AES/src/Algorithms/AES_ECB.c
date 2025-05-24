@@ -6,8 +6,8 @@ word *KeyExpansion(AES alg, const word *key);
 void AESBlock(AES alg, const word *w, const byte *input, byte *output, bool decrypt);
 size_t PKCS7(const byte *input, byte *output, size_t inputSize, size_t outputSize, bool unpad);
 
-size_t AES_ECB(AES alg, const word *key, const byte *input, byte *output, size_t inputSize, size_t outputSize, bool decrypt) {
-    if (!input || !output || !key || !inputSize || !outputSize) {
+size_t AES_ECB(AES alg, const AES_key expanded_key, const byte *input, byte *output, size_t inputSize, size_t outputSize, bool decrypt) {
+    if (!input || !output || !expanded_key || !inputSize || !outputSize) {
         return 0;
     }
 
@@ -23,16 +23,9 @@ size_t AES_ECB(AES alg, const word *key, const byte *input, byte *output, size_t
         return 0;
     }
 
-    word *expanded_key = KeyExpansion(alg, key);
-    if (!expanded_key) {
-        return 0;
-    }
-
     for (size_t block = 0; block < size; block += 16) {
         AESBlock(alg, expanded_key, inputAES + block, output + block, decrypt);
     }
-
-    free(expanded_key);
 
     if (decrypt) {
         // Decryption unpadding

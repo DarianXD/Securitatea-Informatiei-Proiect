@@ -2,8 +2,8 @@ import threading
 import queue
 import socket
 
-from AES import aes_ecb, AES
-from Types import File, FileRequest, FileConfirmation, FileSendConfirmation, FileRecvConfirmation, FileSendProgress, FileRecvProgress, EncryptionError, DecryptionError
+from AES import aes_ecb, aes_expand_key, aes_free_key, AES
+from Types import File, FileRequest, FileConfirmation, FileSendConfirmation, FileRecvConfirmation, FileSendProgress, FileRecvProgress, EncryptionError, DecryptionError, EncryptionKeyError
 
 _MESSAGE_TYPE = 0
 _FILE_TYPE = 1
@@ -62,6 +62,10 @@ class ConnectionWorker(threading.Thread):
 
             if sock is not None:
                 alg, key = self.negotiate(sock)
+                key = aes_expand_key(alg, key)
+                if key is None:
+                    raise EncryptionKeyError()
+
                 conn = Connection(sock, self.on_error, self.on_close, alg, key)
                 self.on_success(conn, addr)
                 
@@ -102,7 +106,8 @@ class Connection:
         self.current_file_size_lock = threading.Lock()
     
         self.recv_size = 1500
-        self.file_chunk_size = 10000
+        self.file_chunk_size = 100000000
+        self.file_chunk_send_size = 10000
 
         self.file_progress_info_interval = 1000000
 
@@ -244,22 +249,25 @@ class Connection:
                     total_sent = 0
                     with open(file.path, "rb") as f:
                         while self.running.is_set():
-                            chunk = f.read(self.file_chunk_size)
-                            if not chunk:
+                            file_chunk = f.read(self.file_chunk_size)
+                            if not file_chunk:
                                 break
 
-                            last = not len(chunk) == self.file_chunk_size
-                            data = self._package_file(chunk, last)
+                            send_chunks = [file_chunk[i:i+self.file_chunk_send_size] for i in range(0, len(file_chunk), self.file_chunk_send_size)]
 
-                            if last:
-                                file_send = True
+                            for chunk in send_chunks:
+                                last = not len(chunk) == self.file_chunk_send_size
+                                data = self._package_file(chunk, last)
 
-                            with self.send_lock:
-                                self.sock.sendall(data)
-                            
-                            total_sent += len(chunk)
-                            if total_sent % self.file_progress_info_interval == 0:
-                                self.recv_queue.put(FileSendProgress(total_sent, file.size))
+                                if last:
+                                    file_send = True
+
+                                with self.send_lock:
+                                    self.sock.sendall(data)
+                                
+                                total_sent += len(chunk)
+                                if total_sent % self.file_progress_info_interval == 0:
+                                    self.recv_queue.put(FileSendProgress(total_sent, file.size))
 
                     with self.file_accept_lock:
                         self.file_accept_flag = False
@@ -297,18 +305,22 @@ class Connection:
                 
                 file_saved = False
                 total_saved = 0
+                data = b''
                 with open(path, "ab") as f:
                     while self.running.is_set():
                         try:
-                            data = self.write_file_queue.get(timeout=0.1)
-                            if data is None:
+                            val = self.write_file_queue.get(timeout=0.1)
+                            if val is None:
                                 continue
 
-                            data, last = data
+                            val, last = val
 
-                            f.write(data)
+                            data += val
                             
-                            total_saved += len(data)
+                            if len(data) >= self.file_chunk_size:
+                                f.write(data)
+                            
+                            total_saved += len(val)
                             if total_saved % self.file_progress_info_interval == 0:
                                 self.recv_queue.put(FileRecvProgress(total_saved, total_size))
 
@@ -486,3 +498,5 @@ class Connection:
             self.write_file_thread.join()
 
             self.sock.close()
+
+            aes_free_key(self.key)

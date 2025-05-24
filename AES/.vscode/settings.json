@@ -18,6 +18,7 @@
         "stdlib.h": "c",
         "stdint.h": "c",
         "aes.h": "c",
-        "stddef.h": "c"
+        "stddef.h": "c",
+        "stdbool.h": "c"
     }
 }

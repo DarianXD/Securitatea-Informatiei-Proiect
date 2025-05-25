@@ -32,7 +32,7 @@ class ConnectionWorker(threading.Thread):
         # calculate the sheared secret
         # use it in a Key Derivation Function (KDF)
         # algoritm could also be stored in the file
-        return (AES.AES_128, [0x00] * 16)
+        return (AES.AES_128, [122, 2, 12, 57, 149, 94, 249, 119, 148, 220, 40, 210, 28, 106, 72, 80])
 
     def run(self):
         try:
@@ -114,10 +114,10 @@ class Connection:
         self.on_error = on_error
         self.on_close = on_close
 
-        self.recv_thread = threading.Thread(target=self._recv_loop, daemon=True)
-        self.send_thread = threading.Thread(target=self._send_loop, daemon=True)
-        self.send_file_thread = threading.Thread(target=self._send_file_loop, daemon=True)
-        self.write_file_thread = threading.Thread(target=self._write_file_loop, daemon=True)
+        self.recv_thread = threading.Thread(target=self._recv_loop)
+        self.send_thread = threading.Thread(target=self._send_loop)
+        self.send_file_thread = threading.Thread(target=self._send_file_loop)
+        self.write_file_thread = threading.Thread(target=self._write_file_loop)
 
         self.recv_thread.start()
         self.send_thread.start()
@@ -133,6 +133,10 @@ class Connection:
     def sending_file(self):
         with self.file_accept_lock:
             return self.file_accept_flag
+
+    @property
+    def is_running(self):
+        return self.running.is_set()
 
     def _recv_loop(self):
         data = b''
@@ -256,6 +260,9 @@ class Connection:
                             send_chunks = [file_chunk[i:i+self.file_chunk_send_size] for i in range(0, len(file_chunk), self.file_chunk_send_size)]
 
                             for chunk in send_chunks:
+                                if not self.running.is_set():
+                                    break
+
                                 last = not len(chunk) == self.file_chunk_send_size
                                 data = self._package_file(chunk, last)
 
@@ -317,7 +324,7 @@ class Connection:
 
                             data += val
                             
-                            if len(data) >= self.file_chunk_size:
+                            if len(data) >= self.file_chunk_size or last:
                                 f.write(data)
                             
                             total_saved += len(val)
@@ -333,6 +340,9 @@ class Connection:
 
                         except queue.Empty:
                             continue
+
+                with self.current_file_lock:
+                    self.current_file = None
 
                 self.recv_queue.put(FileRecvConfirmation(file_saved))
 

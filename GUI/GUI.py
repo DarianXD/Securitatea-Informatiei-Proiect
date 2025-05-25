@@ -103,6 +103,10 @@ class ConnectionWindow(tk.Toplevel):
         self.after(100, self.check_incoming)
 
     def save_chat(self):
+        chat_content = self.text_area.get("1.0", tk.END).strip()
+        if not chat_content:
+            return
+
         file_path = filedialog.asksaveasfilename(
             title="Save Chat"
         )
@@ -110,12 +114,11 @@ class ConnectionWindow(tk.Toplevel):
         if not file_path:
             return
 
-        chat_content = self.text_area.get("1.0", tk.END)
         with open(file_path, "w", encoding="utf-8") as f:
             f.write(chat_content)
 
     def on_close(self):
-        if self.connection is not None:
+        if self.connection is not None and self.connection.is_running:
             if not messagebox.askyesno("disconnect", "Close connection?"):
                 return
 
@@ -126,10 +129,10 @@ class ConnectionWindow(tk.Toplevel):
             if self.connection.sending_file:
                 if not messagebox.askyesno("disconnect", "Close connection while sending a file?"):
                     return
-                
-        self.save_chat()
             
         self.clear_connection()
+
+        self.save_chat()
         self.on_close_window()
 
     def clear_connection(self):
@@ -137,9 +140,8 @@ class ConnectionWindow(tk.Toplevel):
             self.worker.stop()
             self.worker = None
 
-        if self.connection:
+        if self.connection and self.connection.is_running:
             self.connection.close()
-            self.connection = None
 
     def enable_buttons(self):
         self.send_btn.config(state=tk.NORMAL)
@@ -210,7 +212,7 @@ class ConnectionWindow(tk.Toplevel):
                     self.connection.send_file(file)
 
                     now = datetime.datetime.now().strftime("%H:%M:%S")
-                    self.append_text(f"{now} send file start:", "send_file_tag", "")
+                    self.append_text(f"{now} send file request:", "send_file_tag", "")
                     self.append_text(f" {file.name} (size: {file.size} bytes, path: {file.path})")
 
                 except Exception as e:
@@ -232,20 +234,26 @@ class ConnectionWindow(tk.Toplevel):
                         break
 
                     if isinstance(data, FileConfirmation):
-                        if not data.ok:
+                        if data.ok:
+                            now = datetime.datetime.now().strftime("%H:%M:%S")
+                            self.append_text(f"{now} send file started", "send_file_tag", "")
+                            self.append_text("")
+                        else:
                             self.append_text(f"sent file rejected", "error_tag")
 
                     elif isinstance(data, FileSendConfirmation):
                         now = datetime.datetime.now().strftime("%H:%M:%S")
                         if data.ok:
-                            self.append_text(f"{now} send file finished", "send_file_tag")
+                            self.append_text(f"{now} send file finished", "send_file_tag", "")
+                            self.append_text("")
                         else:
                             self.append_text(f"{now} send file failed", "error_tag")
 
                     elif isinstance(data, FileRecvConfirmation):
                         now = datetime.datetime.now().strftime("%H:%M:%S")
                         if data.ok:
-                            self.append_text(f"{now} recv file finished", "recv_file_tag")
+                            self.append_text(f"{now} recv file finished", "recv_file_tag", "")
+                            self.append_text("")
                         else:
                             self.append_text(f"{now} recv file failed", "error_tag")
 
@@ -258,17 +266,22 @@ class ConnectionWindow(tk.Toplevel):
                         self.append_text(f" {data.received / 1000000} / {data.total / 1000000} MB received")
 
                     elif isinstance(data, FileRequest):
+                        now = datetime.datetime.now().strftime("%H:%M:%S")
+                        self.append_text(f"{now} recv file request:", "recv_file_tag", "")
+                        self.append_text(f" {data.name} (size: {data.size} bytes)")
+                        
                         save_path = filedialog.asksaveasfilename(
                             title="Save File",
                             initialfile=data.name,
                         )
 
                         now = datetime.datetime.now().strftime("%H:%M:%S")
+                        file_name = os.path.basename(save_path)
 
                         if save_path:
                             self.connection.accept_file(save_path)
                             self.append_text(f"{now} recv file started:", "recv_file_tag", "")
-                            self.append_text(f" {data.name} (size: {data.size} bytes, path: {save_path})")
+                            self.append_text(f" {file_name} (path: {save_path})")
                         else:
                             self.connection.accept_file(None, False)
                             self.append_text(f"recv file rejected", "error_tag")

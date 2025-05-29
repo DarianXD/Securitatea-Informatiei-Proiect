@@ -4,7 +4,7 @@ from enum import IntEnum
 
 # included library fo arm64 Darwin
 # compiled on macOS 15.5 (24F74)
-libaes = ctypes.CDLL('./libaes.dylib')
+libaes = ctypes.CDLL('./libaes.so')
 
 class AES(IntEnum):
     AES_128 = 0
@@ -62,6 +62,8 @@ def aes_expand_key(alg, key):
         alg, 
         key_array
     )
+
+
 
 def aes_free_key(expanded_key):
     key_ptr = ctypes.pointer(expanded_key)

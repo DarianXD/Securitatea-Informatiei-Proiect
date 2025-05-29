@@ -1,6 +1,9 @@
 import threading
 import queue
 import socket
+import secrets
+import hashlib
+import struct
 
 from AES import aes_ecb, aes_expand_key, aes_free_key, AES
 from Types import File, FileRequest, FileConfirmation, FileSendConfirmation, FileRecvConfirmation, FileSendProgress, FileRecvProgress, EncryptionError, DecryptionError, EncryptionKeyError
@@ -9,6 +12,13 @@ _MESSAGE_TYPE = 0
 _FILE_TYPE = 1
 _FILE_REQUEST_TYPE = 2
 _FILE_RESPONSE_TYPE = 3
+
+ALG_INFO = {
+    "AES_128": (AES.AES_128, 16),
+    "AES_192": (AES.AES_192, 24),
+    "AES_256": (AES.AES_256, 32)
+}
+
 
 class ConnectionWorker(threading.Thread):
     def __init__(self, ip, port, mode, on_success, on_error, on_close):
@@ -23,7 +33,51 @@ class ConnectionWorker(threading.Thread):
         self.running = threading.Event()
         self.running.set()
 
+    def read_exact(self, sock: socket.socket, n: int) -> bytes:
+        buf = b''
+        while len(buf) < n:
+            chunk = sock.recv(n - len(buf))
+            if not chunk:
+                raise ConnectionError("socket closed during DH")
+            buf += chunk
+        return buf
+
     def negotiate(self, sock: socket.socket):
+        #dictionary key val from dh_params
+        with open("dh_params.txt") as f:
+            kv = {
+                k.strip(): v.strip()
+                for line in f
+                if "=" in line and not line.strip().startswith(";")
+                for k, v in [line.split("=", 1)]
+            }
+        alg_name = kv.get("alg", "AES_128") #if there is no alg in file, it will be AES_128 
+        p = int(kv["p"], 16)
+        g = int(kv["g"], 16)
+        if alg_name not in ALG_INFO:
+            raise ValueError(f"Wrong algoritm: {alg_name}")
+        alg_enum, key_len = ALG_INFO[alg_name]
+
+        #generates the privat & public secret
+        a = secrets.randbelow(p - 2) + 2
+        A = pow(g, a, p)
+        A_bytes = A.to_bytes((A.bit_length() + 7) // 8, "big")
+        sock.sendall(struct.pack(">I", len(A_bytes)) + A_bytes)
+
+        len_B = struct.unpack(">I", self.read_exact(sock, 4))[0]
+        B_bytes = self.read_exact(sock, len_B)
+        B = int.from_bytes(B_bytes, "big")
+        if not (2 <= B <= p - 2):
+            raise ValueError("Valoare publica DH invalida")
+        
+        shared = pow(B, a, p)
+        shared_bytes = shared.to_bytes((shared.bit_length() + 7) // 8, "big")
+        full_hash = hashlib.sha512(shared_bytes).digest()
+        aes_key = list(full_hash[:key_len])
+
+
+
+        return alg_enum, aes_key
         # Placeholder for negotiation logic
         # Uses Diffie-Hellman key exchange
         # p and g are stored in a file
@@ -32,8 +86,7 @@ class ConnectionWorker(threading.Thread):
         # calculate the sheared secret
         # use it in a Key Derivation Function (KDF)
         # algoritm could also be stored in the file
-        return (AES.AES_128, [122, 2, 12, 57, 149, 94, 249, 119, 148, 220, 40, 210, 28, 106, 72, 80])
-
+        #return (AES.AES_128, [122, 2, 12, 57, 149, 94, 249, 119, 148, 220, 40, 210, 28, 106, 72, 80])
     def run(self):
         try:
             addr = None

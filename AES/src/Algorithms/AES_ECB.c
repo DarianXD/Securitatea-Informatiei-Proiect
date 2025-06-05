@@ -1,8 +1,6 @@
 #include <stdlib.h>
 #include "AES.h"
 
-word *KeyExpansion(AES alg, const word *key);
-
 void AESBlock(AES alg, const word *w, const byte *input, byte *output, bool decrypt);
 size_t PKCS7(const byte *input, byte *output, size_t inputSize, size_t outputSize, bool unpad);
 

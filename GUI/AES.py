@@ -4,7 +4,7 @@ from enum import IntEnum
 
 # included library fo arm64 Darwin
 # compiled on macOS 15.5 (24F74)
-libaes = ctypes.CDLL('./libaes.so')
+libaes = ctypes.CDLL('./libaes.dylib')
 
 class AES(IntEnum):
     AES_128 = 0
